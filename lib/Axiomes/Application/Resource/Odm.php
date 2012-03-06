@@ -2,6 +2,8 @@
 
 namespace Axiomes\Application\Resource;
 use Doctrine\MongoDB\Connection,
+    Doctrine\Common\ClassLoader,
+    Doctrine\Common\Annotations\AnnotationRegistry,
     Doctrine\ODM\MongoDB\Configuration,
     Doctrine\ODM\MongoDB\Mapping\Driver,
     Doctrine\ODM\MongoDB\DocumentManager;
@@ -34,6 +36,8 @@ class Odm extends \Zend_Application_Resource_ResourceAbstract{
      */
     protected $_configuration = array();
 
+    protected $_loadclass = array();
+
     /**
      * Strategy pattern: initialize resource
      *
@@ -41,21 +45,29 @@ class Odm extends \Zend_Application_Resource_ResourceAbstract{
      */
     public function init()
     {
+        $this->registerClasses();
+
         $configuration = $this->getConfigurationInstance();
         $connection = $this->getConnectionInstance();
 
-        $proxyAutoloader = new \Doctrine\Common\ClassLoader($configuration->getProxyNamespace(), $configuration->getProxyDir());
-        $HydratorAutoloader = new \Doctrine\Common\ClassLoader($configuration->getHydratorNamespace(), $configuration->getHydratorDir());
-
-        $zendLoader = \Zend_Loader_Autoloader::getInstance();
-        $zendLoader->pushAutoloader(array($proxyAutoloader, 'loadClass'),$configuration->getProxyNamespace());
-        $zendLoader->pushAutoloader(array($HydratorAutoloader, 'loadClass'),$configuration->getHydratorNamespace());
-
         $this->_documentManager = DocumentManager::create($connection, $configuration, new \Doctrine\Common\EventManager());
+
+        // TODO: Add a config option to enforce indexes for development
+        $this->_documentManager->getSchemaManager()->ensureIndexes();
+
         \Zend_Registry::set('odm', $this->_documentManager);
         return $this->_documentManager;
     }
 
+    public function registerClasses()
+    {
+        $classes = $this->_options['loadclass'];
+        foreach ($classes as $class => $path) {
+            $classLoader = new ClassLoader($class, $path);
+            $classLoader->register();
+        }
+    }
+    
     /**
      * @param array $config
      * @return Odm
@@ -115,7 +127,6 @@ class Odm extends \Zend_Application_Resource_ResourceAbstract{
         return $this->_documentManager;
     }
 
-
     /**
      * @param array $settings
      * @return \Doctrine\ODM\MongoDB\Configuration
@@ -154,7 +165,7 @@ class Odm extends \Zend_Application_Resource_ResourceAbstract{
      * @return \Doctrine\ODM\MongoDB\Mapping\Driver\Driver
      */
     protected function _buildMetadataDriverImpl($options){
-        
+
         if($options instanceof Driver\Driver) return $options;
         if(! is_array($options) ){
             throw new namespace\Exception('incorrect "metadataDriverImpl" config : must be an instance of Driver or an array');
@@ -172,6 +183,32 @@ class Odm extends \Zend_Application_Resource_ResourceAbstract{
                     foreach($readerParams as $key => $value){
                         $methodName = 'set'.ucfirst($key);
                         $reader->$methodName($value);
+                    }
+                }
+                $register = isset($options['register']) ? $options['register'] : false;
+                if($register) {
+                    foreach($register as $key => $value) {
+                        $methodName = 'register'.ucfirst($key);
+                        \Doctrine\Common\Annotations\AnnotationRegistry::$methodName($value);
+                    }
+                }
+                $driver = new Driver\AnnotationDriver($reader, $path);
+                break;
+            case 'simpleannotation':
+                $reader = new \Doctrine\Common\Annotations\SimpleAnnotationReader();
+                $readerParams = isset($options['readerParams']) ? $options['readerParams'] : false;
+                if ($readerParams) {
+                    foreach($readerParams as $key => $value){
+                        $methodName = 'add'.ucfirst($key);
+                        $reader->$methodName($value);
+                    }
+                }
+                $register = isset($options['register']) ? $options['register'] : false;
+                if($register) {
+                    foreach($register as $key => $value) {
+                        $methodName = 'register'.ucfirst($key);
+                        \Doctrine\Common\Annotations\AnnotationRegistry::$methodName($value);
+                        //$reader->$methodName($value);
                     }
                 }
                 $driver = new Driver\AnnotationDriver($reader, $path);
@@ -200,7 +237,7 @@ class Odm extends \Zend_Application_Resource_ResourceAbstract{
                 $driver->$methodName($value);
             }
         }
-        
+
         return $driver;
     }
 
